@@ -107,7 +107,7 @@ func (s *SNIProxy) peekClientHello(reader io.Reader) (string, *bytes.Buffer, err
 	for err != nil && errors.Is(err, ReadMore) {
 		n, readErr := reader.Read(inBuffer)
 		peekedBytes.Write(inBuffer[:n])
-		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(err, ReadMore) {
+		if readErr != nil && (!errors.Is(readErr, io.EOF) || !errors.Is(err, ReadMore)) {
 			return "", peekedBytes, fmt.Errorf("failed to read from connection: %w", readErr)
 		}
 		tls, err = parseTLSHandshake(peekedBytes.Bytes())
