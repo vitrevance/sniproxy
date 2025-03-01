@@ -113,7 +113,7 @@ func (s *SNIProxy) peekClientHello(reader io.Reader) (string, *bytes.Buffer, err
 		tls, err = parseTLSHandshake(peekedBytes.Bytes())
 	}
 
-	return tls.SNI(), peekedBytes, nil
+	return tls.SNI(), peekedBytes, err
 }
 
 func parseTLSHandshake(buf []byte) (TLSRecord, error) {
