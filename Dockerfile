@@ -6,7 +6,8 @@ COPY go.mod go.sum ./
 
 RUN go mod download
 
-COPY cmd pkg ./
+COPY pkg ./pkg
+COPY cmd ./cmd
 
 ENV CGO_ENABLED=0
 RUN go build -o ./sniproxy ./cmd/sniproxy/
