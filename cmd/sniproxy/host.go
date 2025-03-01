@@ -12,11 +12,10 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/meyskens/sniproxy/pkg/endpoints"
-	"github.com/meyskens/sniproxy/pkg/httpproxy"
-
-	"github.com/meyskens/sniproxy/pkg/sniproxy"
 	"github.com/spf13/cobra"
+	"github.com/vitrevance/sniproxy/pkg/endpoints"
+	"github.com/vitrevance/sniproxy/pkg/httpproxy"
+	"github.com/vitrevance/sniproxy/pkg/sniproxy"
 )
 
 func init() {

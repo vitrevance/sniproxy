@@ -1,27 +1,21 @@
-FROM --platform=$BUILDPLATFORM golang:1.16-alpine as build
+FROM golang:1.22-alpine as build
 
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
+WORKDIR /app
 
-RUN apk add --no-cache git
+COPY go.mod go.sum ./
 
-COPY ./ /go/src/github.com/meyskens/sniproxy
+RUN go mod download
 
-WORKDIR /go/src/github.com/meyskens/sniproxy
+COPY cmd pkg ./
 
-RUN export GOARM=6 && \
-    export GOARCH=amd64 && \
-    if [ "$TARGETPLATFORM" == "linux/arm64" ]; then export GOARCH=arm64; fi && \
-    if [ "$TARGETPLATFORM" == "linux/arm" ]; then export GOARCH=arm; fi && \
-    go build -ldflags "-X main.version=$(git rev-parse --short HEAD)" ./cmd/sniproxy/
+ENV CGO_ENABLED=0
+RUN go build -o ./sniproxy ./cmd/sniproxy/
 
-FROM alpine:3.13
+FROM scratch
 
-RUN apk add --no-cache ca-certificates
+WORKDIR /
 
-COPY --from=build /go/src/github.com/meyskens/sniproxy/sniproxy /usr/local/bin/
+COPY --from=build /app/sniproxy /sniproxy
 
-RUN mkdir /opt/sniproxy
-WORKDIR /opt/sniproxy
-
-ENTRYPOINT [ "/usr/local/bin/sniproxy" ]
+ENTRYPOINT [ "/sniproxy" ]
+CMD [ "host", "-e", "/endpoints.txt" ]

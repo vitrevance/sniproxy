@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meyskens/sniproxy/pkg/endpoints"
+	"github.com/vitrevance/sniproxy/pkg/endpoints"
 )
 
 // SNIProxy is an SNI aware non-decrypting SNI proxy module
