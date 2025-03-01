@@ -117,8 +117,14 @@ func (s *SNIProxy) peekClientHello(reader io.Reader) (string, *bytes.Buffer, err
 }
 
 func parseTLSHandshake(buf []byte) (TLSRecord, error) {
+	if len(buf) == 0 {
+		return TLSRecord{}, ReadMore
+	}
 	if buf[0] != 22 {
 		return TLSRecord{}, NotTLS
+	}
+	if len(buf) < 5 {
+		return TLSRecord{}, ReadMore
 	}
 	version := binary.BigEndian.Uint16(buf[1:3])
 	size := binary.BigEndian.Uint16(buf[3:5])
