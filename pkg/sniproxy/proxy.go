@@ -2,10 +2,10 @@ package sniproxy
 
 import (
 	"bytes"
-	"crypto/tls"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -35,13 +35,17 @@ func (s *SNIProxy) HandleConnection(conn net.Conn) error {
 	domainName := ""
 	var peekedBytes *bytes.Buffer
 	{
-		clientHello, pb, err := s.peekClientHello(conn)
+		sni, pb, err := s.peekClientHello(conn)
 		peekedBytes = pb
 		if err != nil {
-			domainName = "*"
-			log.Printf("error reading SNI: %v", err)
+
+			if errors.Is(err, NotTLS) {
+				domainName = "*"
+			} else {
+				return fmt.Errorf("error reading connection: %v", err)
+			}
 		} else {
-			domainName = clientHello.ServerName
+			domainName = sni
 		}
 	}
 	clientReader := io.MultiReader(peekedBytes, conn)
@@ -81,23 +85,123 @@ func (s *SNIProxy) HandleConnection(conn net.Conn) error {
 	return nil
 }
 
-func (s *SNIProxy) peekClientHello(reader io.Reader) (*tls.ClientHelloInfo, *bytes.Buffer, error) {
+type TLSHeader struct {
+	Type    uint8
+	Version uint16
+}
+
+type TLSRecord struct {
+	Header TLSHeader
+	Body   []byte
+}
+
+var ReadMore = errors.New("TLS size is greater than provided buffer")
+var NotTLS = errors.New("not a TLS handshake")
+
+func (s *SNIProxy) peekClientHello(reader io.Reader) (string, *bytes.Buffer, error) {
 	peekedBytes := new(bytes.Buffer)
 
-	var hello *tls.ClientHelloInfo
-
-	err := tls.Server(writeMockingConn{reader: io.TeeReader(reader, peekedBytes)}, &tls.Config{
-		GetConfigForClient: func(argHello *tls.ClientHelloInfo) (*tls.Config, error) {
-			hello = new(tls.ClientHelloInfo)
-			*hello = *argHello
-			return nil, nil
-		},
-	}).Handshake()
-
-	// the error here is expected as we will not complete the handshake we just need the hello
-	if hello == nil {
-		return nil, nil, err
+	var err error = ReadMore
+	var tls TLSRecord
+	inBuffer := make([]byte, 1024)
+	for err != nil && errors.Is(err, ReadMore) {
+		n, readErr := reader.Read(inBuffer)
+		peekedBytes.Write(inBuffer[:n])
+		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(err, ReadMore) {
+			return "", peekedBytes, fmt.Errorf("failed to read from connection: %w", readErr)
+		}
+		tls, err = parseTLSHandshake(peekedBytes.Bytes())
 	}
 
-	return hello, peekedBytes, nil
+	return tls.SNI(), peekedBytes, nil
+}
+
+func parseTLSHandshake(buf []byte) (TLSRecord, error) {
+	if buf[0] != 22 {
+		return TLSRecord{}, NotTLS
+	}
+	version := binary.BigEndian.Uint16(buf[1:3])
+	size := binary.BigEndian.Uint16(buf[3:5])
+	if version != 0x0301 && version != 0x0302 && version != 0x0303 && version != 0x0304 {
+		return TLSRecord{}, NotTLS
+	}
+	if int(size+5) > len(buf) {
+		return TLSRecord{}, ReadMore
+	}
+	return TLSRecord{
+		Header: TLSHeader{
+			Type:    22,
+			Version: version,
+		},
+		Body: buf[5 : size+5],
+	}, nil
+}
+
+func (r *TLSRecord) SNI() string {
+	pos := 1 + 3 + 2 + 32
+	end := len(r.Body)
+
+	if pos > end-1 {
+		return ""
+	}
+	sessionIdSize := int(r.Body[pos])
+	pos += 1 + sessionIdSize
+
+	if pos > end-2 {
+		return ""
+	}
+	cipherSuiteSize := int(binary.BigEndian.Uint16(r.Body[pos : pos+2]))
+	pos += 2 + cipherSuiteSize
+
+	if pos > end-1 {
+		return ""
+	}
+	compressionTypeSize := int(r.Body[pos])
+	pos += 1 + compressionTypeSize
+
+	if pos > end-2 {
+		return ""
+	}
+	extensionsSize := int(binary.BigEndian.Uint16(r.Body[pos : pos+2]))
+	pos += 2
+
+	if pos+extensionsSize > end {
+		return ""
+	}
+	end = pos + extensionsSize
+
+	for pos+4 < end {
+		extType := binary.BigEndian.Uint16(r.Body[pos : pos+2])
+		extSize := int(binary.BigEndian.Uint16(r.Body[pos+2 : pos+4]))
+		pos += 4
+		if extType == 0 {
+			if pos > end-2 {
+				return ""
+			}
+			namesLength := int(binary.BigEndian.Uint16(r.Body[pos : pos+2]))
+			pos += 2
+
+			// iterate over name list
+			n := pos
+			pos += namesLength
+			if pos > end {
+				return ""
+			}
+			for n < pos-3 {
+				nameType := r.Body[n]
+				nameSize := int(binary.BigEndian.Uint16(r.Body[n+1 : n+3]))
+				n += 3
+
+				if nameType == 0 {
+					if n+nameSize > end {
+						return ""
+					}
+					return string(r.Body[n : n+nameSize])
+				}
+			}
+		} else {
+			pos += extSize
+		}
+	}
+	return ""
 }
