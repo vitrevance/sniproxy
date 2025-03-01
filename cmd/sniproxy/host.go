@@ -107,13 +107,13 @@ func (h *hostCmdOptions) serveHTTP() {
 	// start server
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		ep, err := h.db.Get(strings.Split(req.Host, ":")[0]) // no port for hostname
-		if err != nil || ep == "" {
+		if err != nil || ep.Domain == "" {
 			w.WriteHeader(http.StatusBadGateway)
 			w.Write([]byte("no endpoint found"))
 			return
 		}
 
-		dialer, err := net.Dial("tcp", fmt.Sprintf("%s:80", ep))
+		dialer, err := net.Dial("tcp", fmt.Sprintf("%s", ep.Address))
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			w.Write([]byte("error dialing endpoint"))

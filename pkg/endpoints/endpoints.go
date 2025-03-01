@@ -6,16 +6,19 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
-	"sync"
-
-	"github.com/fsnotify/fsnotify"
 )
+
+type EndpointEntry struct {
+	Domain  string
+	Address string
+	regex   *regexp.Regexp
+}
 
 // EndpointDB contains a set of endpoints
 type EndpointDB struct {
-	endpointsMutex sync.Mutex
-	endpoints      map[string]string
+	endpoints []EndpointEntry
 
 	file string
 }
@@ -23,37 +26,11 @@ type EndpointDB struct {
 // NewEndpointsDB gives an EndpointDB instance
 func NewEndpointsDB(ctx context.Context, file string) *EndpointDB {
 	db := &EndpointDB{
-		endpoints: map[string]string{},
+		endpoints: []EndpointEntry{},
 		file:      file,
-	}
-	// creates a new file watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		fmt.Println("ERROR", err)
-	}
-
-	if err := watcher.Add(file); err != nil {
-		fmt.Println("ERROR", err)
 	}
 
 	db.readFile()
-
-	go func() {
-		defer watcher.Close()
-
-		for {
-			select {
-			// watch for events
-			case <-watcher.Events:
-				db.readFile()
-			case err := <-watcher.Errors:
-				if err != nil {
-					panic(err)
-				}
-			}
-		}
-
-	}()
 	return db
 }
 
@@ -72,34 +49,25 @@ func (e *EndpointDB) readFile() {
 		// split line
 		line := scanner.Text()
 		// split line
-		parts := strings.Split(line, ",")
-		if len(parts) < 2 {
+		ind := strings.LastIndex(line, ",")
+		if ind == -1 {
 			continue
 		}
+		parts := []string{line[:ind], line[ind+1:]}
 		// add endpoint
-		e.endpointsMutex.Lock()
-		e.endpoints[parts[0]] = parts[1]
-		e.endpointsMutex.Unlock()
+		e.endpoints = append(e.endpoints, EndpointEntry{
+			Domain:  parts[0],
+			Address: parts[1],
+			regex:   regexp.MustCompile(parts[0]),
+		})
 	}
 }
 
-func (e *EndpointDB) Get(endpoint string) (string, error) {
-	e.endpointsMutex.Lock()
-	defer e.endpointsMutex.Unlock()
-
-	ok := false
-	ep := ""
-	for !ok {
-		ep, ok = e.endpoints[endpoint]
-		if !ok {
-			// go one up the dns tree
-			splitted := strings.Split(endpoint, ".")
-			if len(splitted) < 2 {
-				return "", fmt.Errorf("endpoint %s not found", endpoint)
-			}
-			endpoint = strings.Join(splitted[1:], ".")
+func (e *EndpointDB) Get(endpoint string) (EndpointEntry, error) {
+	for _, ep := range e.endpoints {
+		if ep.regex.MatchString(endpoint) {
+			return ep, nil
 		}
 	}
-
-	return ep, nil
+	return EndpointEntry{}, fmt.Errorf("failed to find entry for endpoint %v", endpoint)
 }

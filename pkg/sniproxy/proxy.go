@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -31,23 +32,30 @@ func (s *SNIProxy) HandleConnection(conn net.Conn) error {
 		return fmt.Errorf("error setting read timeout: %w", err)
 	}
 
-	clientHello, peekedBytes, err := s.peekClientHello(conn)
-	if err != nil {
-		return fmt.Errorf("error reading SNI: %w", err)
+	domainName := ""
+	var peekedBytes *bytes.Buffer
+	{
+		clientHello, pb, err := s.peekClientHello(conn)
+		peekedBytes = pb
+		if err != nil {
+			domainName = "*"
+			log.Printf("error reading SNI: %v", err)
+		} else {
+			domainName = clientHello.ServerName
+		}
 	}
-
 	clientReader := io.MultiReader(peekedBytes, conn)
 
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("error removing timeout: %w", err)
 	}
 
-	ep, err := s.endpointsDB.Get(clientHello.ServerName)
+	ep, err := s.endpointsDB.Get(domainName)
 	if err != nil {
-		return fmt.Errorf("error checking endpoint db: %w", err)
+		return fmt.Errorf("error routing domain %s: %w", domainName, err)
 	}
 
-	backendConn, err := net.Dial("tcp", fmt.Sprintf("%s:443", ep))
+	backendConn, err := net.Dial("tcp", fmt.Sprintf("%s", ep.Address))
 	if err != nil {
 		return fmt.Errorf("error dialing backend: %w", err)
 	}
